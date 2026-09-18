@@ -84,6 +84,8 @@ Five tabs:
 | **Tokens & Cost** | Per-agent and per-module token breakdown, reasoning tokens, and the `source` of every count |
 | **Failure modes** | Fire each failure scenario and watch the telemetry survive it |
 
+**[Full walkthrough with screenshots →](docs/DASHBOARD.md)**
+
 The dashboard is a **pure consumer of the public HTTP API** — it never imports module or agent code, so everything it displays is exactly what the external testing platform can observe. It also runs with no services up, showing them as unreachable rather than erroring.
 
 In Docker it comes up alongside the rest at `localhost:8501`; module URLs come from the same `*_URL` environment variables.
@@ -209,7 +211,7 @@ python -m compileall .
 pytest
 ```
 
-202 tests, fully offline — no API key, no network, no running services. LLM calls are replaced with a deterministic fake, so token and latency assertions are exact. Cross-module tests run the real Research app over an in-memory ASGI transport, so requests are genuinely serialised and headers genuinely propagated.
+204 tests, fully offline — no API key, no network, no running services. LLM calls are replaced with a deterministic fake, so token and latency assertions are exact. Cross-module tests run the real Research app over an in-memory ASGI transport, so requests are genuinely serialised and headers genuinely propagated.
 
 | File | Covers |
 |---|---|
