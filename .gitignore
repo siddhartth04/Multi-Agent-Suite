@@ -17,7 +17,5 @@ venv/
 .coverage
 htmlcov/
 
-# Outputs and logs
-outputs/*
-!outputs/.gitkeep
+# Logs
 *.log
