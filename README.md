@@ -66,7 +66,19 @@ pip install -r requirements-ui.txt
 streamlit run ui/app.py      # http://localhost:8501
 ```
 
+A bar across the top selects the scope: **◆ Application**, or one of **Research · Fact Checker · Marketing · Travel**. Each module gets its own page; the application view keeps the cross-cutting ones.
+
 Every screenshot below is a real capture of the running system, with real LLM calls against a live provider.
+
+### A module's own page
+
+![The Travel module page: its three agents as a pipeline, capability tags, and its own Run, Traces, Tokens and Failure modes tabs](docs/screenshots/6-module-page.png)
+
+Each module page opens with its identity — port, agent count, model, whether it is independent — then its **agent pipeline**, each agent with its role, goal and any tools it uses. Below that are tabs scoped to that module alone: Run, Traces, Tokens, Failure modes.
+
+A module with a dependency shows it explicitly after its agents:
+
+![The Fact Checker page, showing a DEPENDS ON RESEARCH badge and a card reading 'Calls research over HTTP, optional'](docs/screenshots/7-module-dependency.png)
 
 ### Run — drive an agent pipeline
 

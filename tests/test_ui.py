@@ -137,16 +137,48 @@ class TestChartsRenderRealShapes:
 class TestDashboardRuns:
     """The app script itself must execute without raising, services or not."""
 
-    def test_app_renders_with_no_services_running(self) -> None:
+    @staticmethod
+    def _app():
         pytest.importorskip("streamlit")
         from streamlit.testing.v1 import AppTest
 
         app = AppTest.from_file("ui/app.py", default_timeout=60)
-        app.session_state["_"] = None
         app.run()
+        return app
+
+    def test_app_renders_with_no_services_running(self) -> None:
+        app = self._app()
 
         assert not app.exception, [e.value for e in app.exception]
-        assert len(app.tabs) == 5
+        # The application overview: topology, traces, tokens.
+        assert len(app.tabs) == 3
+
+    def test_scope_bar_offers_the_overview_and_every_module(self) -> None:
+        """Each module is its own page, selected from the bar above the tabs."""
+        app = self._app()
+
+        assert app.radio, "the scope selector must be present"
+        options = app.radio[0].options
+        assert len(options) == 5, "one overview plus four modules"
+        for label in ("Research", "Fact Checker", "Marketing", "Travel"):
+            assert any(label in option for option in options), f"{label} missing from the bar"
+
+    @pytest.mark.parametrize(
+        ("module_id", "expected_agents"),
+        [
+            ("research", ["researcher", "analyst", "reviewer"]),
+            ("fact_checker", ["fact_researcher", "verification"]),
+            ("marketing", ["researcher", "strategist", "writer"]),
+            ("travel", ["planner", "search", "booking"]),
+        ],
+    )
+    def test_each_module_page_renders(self, module_id: str, expected_agents: list[str]) -> None:
+        app = self._app()
+        app.radio[0].set_value(module_id).run()
+
+        assert not app.exception, [e.value for e in app.exception]
+        # Run, Traces, Tokens, Failure modes.
+        assert len(app.tabs) == 4
 
 
 class TestChartTitles:

@@ -20,6 +20,28 @@ That makes observability the product, not a side feature. The dashboard exists t
 
 ---
 
+## The module bar
+
+A bar across the top of every page selects the scope:
+
+```
+◆ Application   ·   🟢 Research   ·   🟢 Fact Checker   ·   🟢 Marketing   ·   🟢 Travel
+```
+
+Each entry carries a live health dot. **◆ Application** keeps the cross-cutting views (topology, traces, token totals); each module opens its **own page** — its agents, its runs, its traces, its tokens, its failure modes — so you can work on one service without the others in the way.
+
+![The Travel module page, with its three agents shown as a pipeline](screenshots/6-module-page.png)
+
+A module page opens with its identity: port, agent count, version, model, and whether it is independent. Then its **agent pipeline** — each agent with its role, its goal, and any tool it uses (`search` here carries `web_search`). Then tabs scoped to that module alone.
+
+A module with a dependency declares it after its agents:
+
+![The Fact Checker page showing its dependency on Research over HTTP](screenshots/7-module-dependency.png)
+
+`DEPENDS ON RESEARCH`, then a card reading *"Calls research over HTTP · http://127.0.0.1:8001 · optional"*. Optional means Fact Checker still answers when Research is down — it degrades and records the failed call.
+
+---
+
 ## 1. Topology — the map
 
 ![Topology tab](screenshots/1-topology.png)
