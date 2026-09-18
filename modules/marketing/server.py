@@ -1,3 +1,6 @@
+"""ASGI entrypoint for the marketing service."""
+
 from common.service import create_service
-from .app import run
-app = create_service("Marketing Service", "Researcher + Strategist + Writer", run, "product")
+from modules.marketing.module import DEFINITION
+
+app = create_service(DEFINITION)

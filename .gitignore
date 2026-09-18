@@ -1,0 +1,23 @@
+# Secrets -- never commit real keys
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Outputs and logs
+outputs/*
+!outputs/.gitkeep
+*.log

@@ -1,0 +1,66 @@
+"""Reusable telemetry: trace context, spans, tokens, latency, JSON logs."""
+
+from common.telemetry.context import (
+    REQUEST_ID_HEADER,
+    TRACEPARENT_HEADER,
+    TraceContext,
+    get_trace_context,
+    new_request_id,
+    new_span_id,
+    new_trace_id,
+    use_trace_context,
+)
+from common.telemetry.logging import configure_logging, get_logger
+from common.telemetry.models import (
+    AgentDescriptor,
+    AgentExecution,
+    DependencyCall,
+    DependencyDescriptor,
+    HealthResponse,
+    LatencyBreakdown,
+    MetadataResponse,
+    RunResult,
+    SpanKind,
+    SpanRecord,
+    SpanStatus,
+    TokenSource,
+    TokenUsage,
+    TraceTree,
+    utc_now,
+)
+from common.telemetry.otel import install_otel, instrument_app
+from common.telemetry.tracer import Recorder, TraceStore, current_span, summarize_latency
+
+__all__ = [
+    "AgentDescriptor",
+    "AgentExecution",
+    "DependencyCall",
+    "DependencyDescriptor",
+    "HealthResponse",
+    "LatencyBreakdown",
+    "MetadataResponse",
+    "REQUEST_ID_HEADER",
+    "Recorder",
+    "RunResult",
+    "SpanKind",
+    "SpanRecord",
+    "SpanStatus",
+    "TRACEPARENT_HEADER",
+    "TokenSource",
+    "TokenUsage",
+    "TraceContext",
+    "TraceStore",
+    "TraceTree",
+    "configure_logging",
+    "current_span",
+    "get_logger",
+    "get_trace_context",
+    "install_otel",
+    "instrument_app",
+    "new_request_id",
+    "new_span_id",
+    "new_trace_id",
+    "summarize_latency",
+    "use_trace_context",
+    "utc_now",
+]

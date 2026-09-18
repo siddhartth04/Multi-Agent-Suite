@@ -1,17 +1,63 @@
+# Five containers, five independently deployable services.
+# Each module could just as easily run on its own VM: the only thing binding
+# them together is the *_URL environment variables.
+
+x-common-env: &common-env
+  MODEL: ${MODEL:-gemini/gemini-2.0-flash}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_API_BASE: ${LLM_API_BASE:-}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  ENVIRONMENT: ${ENVIRONMENT:-docker}
+  OTEL_ENABLED: ${OTEL_ENABLED:-true}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+  LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+  FAILURE_MODE: ${FAILURE_MODE:-normal}
+
 services:
   research:
     build: {context: ., dockerfile: deploy/research/Dockerfile}
     ports: ["8001:8000"]
+    environment:
+      <<: *common-env
+      DEPLOYMENT_ID: research-docker
+
   fact-checker:
     build: {context: ., dockerfile: deploy/fact_checker/Dockerfile}
     ports: ["8002:8000"]
-    environment: {RESEARCH_URL: http://research:8000}
-    depends_on: [research]
+    environment:
+      <<: *common-env
+      DEPLOYMENT_ID: fact-checker-docker
+      RESEARCH_URL: http://research:8000
+    depends_on:
+      research: {condition: service_healthy}
+
   marketing:
     build: {context: ., dockerfile: deploy/marketing/Dockerfile}
     ports: ["8003:8000"]
-    environment: {RESEARCH_URL: http://research:8000}
-    depends_on: [research]
+    environment:
+      <<: *common-env
+      DEPLOYMENT_ID: marketing-docker
+      RESEARCH_URL: http://research:8000
+    depends_on:
+      research: {condition: service_healthy}
+
+  # No depends_on: Travel is independent by design.
   travel:
     build: {context: ., dockerfile: deploy/travel/Dockerfile}
     ports: ["8004:8000"]
+    environment:
+      <<: *common-env
+      DEPLOYMENT_ID: travel-docker
+
+  gateway:
+    build: {context: ., dockerfile: deploy/gateway/Dockerfile}
+    ports: ["8000:8000"]
+    environment:
+      <<: *common-env
+      DEPLOYMENT_ID: gateway-docker
+      RESEARCH_URL: http://research:8000
+      FACT_CHECKER_URL: http://fact-checker:8000
+      MARKETING_URL: http://marketing:8000
+      TRAVEL_URL: http://travel:8000
+    depends_on: [research, fact-checker, marketing, travel]

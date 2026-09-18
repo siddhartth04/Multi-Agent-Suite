@@ -1,108 +1,220 @@
-# Lightweight Modular Multi-Agent Application
+# Modular Multi-Agent Application (System Under Test)
 
-A small CrewAI application that demonstrates **one logical application containing multiple agent modules**, with a deliberate mix of related and independent groups.
+One logical application made of four **independently deployable** agent modules, built to be onboarded, exercised and observed by an external testing platform.
 
-## Structure
+This repository is the **SUT**. It is not the testing platform.
 
-```text
-ONE APPLICATION
-│
-├── Research
-│   ├── Researcher
-│   └── Reviewer
-├── Fact Checker
-│   ├── Researcher
-│   └── Verification Agent
-├── Marketing
-│   ├── Researcher
-│   ├── Strategist
-│   └── Writer
-├── Travel
-│   ├── Planner
-│   ├── Search Agent
-│   └── Booking Advisor```
-
-Relationships:
+## Topology
 
 ```text
-Research ─────→ Fact Checker
-    └──────────→ Marketing
+                        multi-agent-sut
+                              │
+        ┌─────────────────────┼──────────────────────┐
+        ▼                     ▼                      ▼
+   RESEARCH :8001       FACT CHECKER :8002    MARKETING :8003
+   researcher                fact_researcher       researcher
+        ↓                         ↓                    ↓
+   analyst                   verification          strategist
+        ↓                                               ↓
+   reviewer                                          writer
+        │                         ▲                    ▲
+        └────────── http ─────────┴──────── http ──────┘
 
-Travel  = independent
+                        TRAVEL :8004
+                   planner → search → booking
+                    (no cross-module dependency)
 ```
 
-## Separate deployment is a first-class feature
+- **Research** is independent, so the other two can depend on it safely.
+- **Fact Checker** and **Marketing** depend on Research **over HTTP**, never by importing it. The dependency is optional: if Research is unreachable, they degrade and record the failed call.
+- **Travel** is fully independent — the control case proving independent deployment does not imply a dependency.
 
-Each module is an independent FastAPI service. Therefore:
+Independent deployment and dependency are separate concerns: all four run as separate processes, containers or hosts regardless of who calls whom.
 
-- each module can run in a different terminal;
-- each module can listen on its own port;
-- each module can be built into its own Docker image;
-- each module can later be deployed to a different VM/container/host;
-- the gateway only needs the URL of each module.
-
-### Local service mode
+## Quick start
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env
+pip install -r requirements-dev.txt
+copy .env.example .env    # then put a real key in .env
 ```
 
-Start four terminals:
+Set a model and key in `.env`. Any provider [litellm](https://docs.litellm.ai/docs/providers) supports works:
+
+```ini
+MODEL=gemini/gemini-2.0-flash
+LLM_API_KEY=your_key_here
+```
+
+Run each module in its own terminal:
 
 ```powershell
-uvicorn modules.research.server:app --host 0.0.0.0 --port 8001
+uvicorn modules.research.server:app     --host 0.0.0.0 --port 8001
 uvicorn modules.fact_checker.server:app --host 0.0.0.0 --port 8002
-uvicorn modules.marketing.server:app --host 0.0.0.0 --port 8003
-uvicorn modules.travel.server:app --host 0.0.0.0 --port 8004
+uvicorn modules.marketing.server:app    --host 0.0.0.0 --port 8003
+uvicorn modules.travel.server:app       --host 0.0.0.0 --port 8004
+uvicorn gateway.app:app                 --host 0.0.0.0 --port 8000
 ```
 
-Each has `/health`, `/metadata`, `/run`, and `/docs`.
-
-### Docker mode
+Or all five as containers:
 
 ```powershell
 docker compose up --build
 ```
 
-Five separate containers are created. The container-internal port is 8000, while the host ports are 8001-8005.
+## Service contract
 
-### Gateway mode
+Every module exposes the same endpoints, so all four onboard identically.
 
-```powershell
-uvicorn gateway.app:app --host 0.0.0.0 --port 8000
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Liveness, identity, uptime, whether an LLM is configured |
+| `GET /metadata` | Discovery: application/module/service ids, version, agents, capabilities, dependencies, supported failure modes |
+| `POST /run` | Execute the module |
+| `GET /telemetry/traces` | Recent traces recorded by this service |
+| `GET /telemetry/traces/{trace_id}` | One trace's full span tree |
+| `GET /telemetry/tokens` | Token totals observed by this service |
+| `GET /docs` | OpenAPI UI |
+
+### `POST /run`
+
+```jsonc
+{
+  "input": "Solid-state batteries are in mass production.",
+  "context": null,             // optional caller-supplied context
+  "failure_mode": null,        // override this service's failure mode per request
+  "use_dependencies": true     // false runs the module without calling upstream
+}
 ```
 
-Endpoints:
+The response is a complete telemetry document — including when the run fails:
 
-- `GET /topology`
-- `GET /health`
-- `POST /workflow/research` — Research module only
-- `POST /workflow/fact-check` — Fact Checker module only
-- `POST /workflow/marketing` — Marketing module only
-- `POST /workflow/travel` — Travel module only
+```jsonc
+{
+  "application_id": "multi-agent-sut",
+  "module_id": "fact_checker",
+  "trace_id": "6f907369b1ff70bd8b5f1a9167b20b0a",
+  "request_id": "req_81c094ed36f2e850",
+  "status": "ok",
+  "result": "...",
+  "agents": [
+    {"agent_id": "fact_researcher", "status": "ok", "duration_ms": 1980.4,
+     "tokens": {"input_tokens": 137, "output_tokens": 52, "total_tokens": 189,
+                "source": "provider"}}
+  ],
+  "dependencies": [
+    {"module_id": "research", "status": "ok", "http_status": 200,
+     "duration_ms": 3594.7, "retry_count": 0,
+     "tokens": {"total_tokens": 567, "source": "provider"}}
+  ],
+  "tokens": {"total_tokens": 945, "cost_usd": 0.00025875, "source": "provider"},
+  "latency": {"total_ms": 7021.8, "llm_ms": 3427.0, "tool_ms": 0.0,
+              "dependency_ms": 3595.4, "overhead_ms": 0.0}
+}
+```
 
-The gateway exposes each independently deployable module without forcing cross-module dependencies.
+## Gateway
 
-## Keep it lightweight
+| Endpoint | Purpose |
+|---|---|
+| `GET /topology` | The declared graph: modules, agents, and dependency edges |
+| `GET /discovery` | Live `/metadata` fetched from every module |
+| `GET /health` | Aggregate health across all four |
+| `GET /telemetry/traces/{trace_id}` | One distributed trace assembled from every service that saw it |
+| `POST /workflow/{research,fact-check,marketing,travel}` | Run a module through the gateway |
 
-Required: Python, CrewAI, FastAPI/Uvicorn, HTTPX, and an LLM API key.
+The gateway only holds URLs — it never imports agent code, so modules stay independently deployable.
 
-Not required: Kubernetes, Kafka, Redis, PostgreSQL, NATS, vector DB, or cloud deployment.
+## Observability
 
-## References
+**Distributed tracing.** Every request carries a W3C `traceparent`. A trace started at Fact Checker keeps its id through the HTTP call into Research, so both services record spans under one trace:
 
-The internal crews follow CrewAI's agent/task pattern. The service boundary follows lightweight FastAPI deployment patterns, where services/processes can be independently run and containerized.
+```text
+fact_checker.request            ← trace 6f9073…
+├── service_call.research       ← same trace id crosses the boundary
+│     └── (recorded on :8001)
+│         research.request
+│         ├── agent.researcher → llm.researcher
+│         ├── agent.analyst    → llm.analyst
+│         └── agent.reviewer   → llm.reviewer
+├── agent.fact_researcher → tool.web_search, llm.fact_researcher
+└── agent.verification    → llm.verification
+```
 
-- CrewAI: https://github.com/crewAIInc/crewAI
-- CrewAI examples: https://github.com/crewAIInc/crewAI-examples
-- Travel Planner A2A: https://github.com/plaban1981/Travel-Planner-Multi-Agent-A2A
-- FastAPI deployment concepts: https://fastapi.tiangolo.com/deployment/concepts/
-- FastAPI containers: https://fastapi.tiangolo.com/deployment/docker/
+Spans are always built in-process and served from `/telemetry/*`. Export is opt-in: set `OTEL_EXPORTER_OTLP_ENDPOINT` for any OTLP collector, or `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` for Langfuse. With neither set, nothing is shipped and nothing breaks.
 
+**Tokens** are captured per LLM call and aggregated per agent → module → request, including any usage reported by a downstream module. Every count carries a `source`:
 
-## IMPORTANT: Claude Code project context
+- `provider` — reported by the provider
+- `estimated` — locally approximated, never presented as exact
+- `unavailable` — not obtainable
 
-Read `PROJECT_CONTEXT_FOR_CLAUDE_CODE.md` before making architectural changes. It is the source of truth for the SUT purpose, hybrid dependency model, separate deployment, observability, token/latency tracking, failure scenarios, and engineering constraints.
+Counts are never fabricated. Categories the provider does not report (cached, reasoning) stay `null` rather than `0`.
+
+**Latency** separates measured wall clock (`total_ms`) from per-category self time. Concurrent spans can sum past wall clock, so `total_ms` is never a sum of children and `overhead_ms` clamps at zero.
+
+**Logs** are one JSON object per line, stamped with `trace_id` and `request_id`.
+
+## Failure injection
+
+Deterministic and configurable — never random. Set `FAILURE_MODE` on a service, or `failure_mode` per request.
+
+| Mode | Behaviour |
+|---|---|
+| `normal` | No injection |
+| `slow` | Delays by `SLOW_MODE_DELAY_SECONDS` and still succeeds |
+| `error` | Fails with a labelled application error (HTTP 500) |
+| `timeout` | Sleeps past the caller's timeout, then reports `timeout` (HTTP 504) |
+| `tool_failure` | Fails when a tool is invoked |
+| `dependency_failure` | Fails the cross-service call |
+
+A failure still returns a full telemetry document: the trace stays correlated, agents that already ran are still reported, and their tokens are still counted.
+
+```powershell
+curl -X POST http://127.0.0.1:8002/run `
+  -H "Content-Type: application/json" `
+  -d '{\"input\":\"a claim\",\"failure_mode\":\"error\"}'
+```
+
+## Tests
+
+```powershell
+python -m compileall .
+pytest
+```
+
+182 tests, fully offline — no API key, no network, no running services. LLM calls are replaced with a deterministic fake, so token and latency assertions are exact. Cross-module tests run the real Research app over an in-memory ASGI transport, so requests are genuinely serialised and headers genuinely propagated.
+
+| File | Covers |
+|---|---|
+| `tests/test_telemetry.py` | Trace propagation, spans, token merging, latency |
+| `tests/test_service_contract.py` | `/health`, `/metadata`, `/run` across all four modules |
+| `tests/test_cross_module.py` | The Research dependency, trace continuity, token roll-up, degradation |
+| `tests/test_failure_modes.py` | Every failure mode and partial-failure telemetry |
+| `tests/test_gateway.py` | Topology, registry, routing |
+| `tests/test_config_and_tokens.py` | Configuration, token extraction, tools |
+
+## Layout
+
+```text
+common/
+  config.py          environment-based settings
+  service.py         FastAPI factory: the shared endpoint contract
+  module_base.py     module runtime: orchestration, aggregation, error handling
+  http_client.py     cross-service calls with trace propagation and retries
+  failures.py        deterministic failure injection
+  tools.py           async agent tools
+  agents/            agent specs, sequential pipeline, litellm client
+  telemetry/         trace context, spans, models, JSON logs, OTel export
+modules/
+  research/  fact_checker/  marketing/  travel/
+    module.py        agent definitions and dependencies (data, not behaviour)
+    server.py        ASGI entry point
+gateway/             registry, topology, routing
+deploy/              one Dockerfile per service
+```
+
+Each module's `module.py` declares *what* it is; `common/` supplies *how* it runs. Adding a module means writing one definition file and one entry point.
+
+See [architecture.md](architecture.md) for the design rationale and [PROJECT_CONTEXT_FOR_CLAUDE_CODE.md](PROJECT_CONTEXT_FOR_CLAUDE_CODE.md) for the source-of-truth requirements.

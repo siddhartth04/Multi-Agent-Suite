@@ -1,3 +1,6 @@
+"""ASGI entrypoint for the research service."""
+
 from common.service import create_service
-from .app import run
-app = create_service("Research Service", "Researcher + Reviewer", run, "topic")
+from modules.research.module import DEFINITION
+
+app = create_service(DEFINITION)
