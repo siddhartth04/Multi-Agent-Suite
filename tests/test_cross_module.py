@@ -96,7 +96,9 @@ class TestDependencyCall:
 
         assert len(service_calls) == 1
         assert service_calls[0]["attributes"]["http.status_code"] == 200
-        assert service_calls[0]["duration_ms"] > 0
+        # An in-process call can complete inside one clock tick, so the span
+        # must exist and be timed, but its duration may round to zero.
+        assert service_calls[0]["duration_ms"] >= 0
 
     def test_downstream_tokens_roll_up_into_the_caller(self, wired) -> None:
         client, definition, _ = wired
@@ -130,12 +132,12 @@ class TestDependencyCall:
         body = client.post("/run", json={"input": "test"}).json()
         latency = body["latency"]
 
-        assert latency["dependency_ms"] > 0, "cross-service time is its own category"
-        assert body["dependencies"][0]["duration_ms"] > 0
-
-        # With a mocked LLM the whole request finishes in around a millisecond,
-        # which is the resolution of the clock on some platforms, so compare with
-        # a tolerance rather than asserting an exact ordering.
+        # With a mocked LLM over an in-process transport the whole call can
+        # finish inside one tick of the clock, which is ~1ms on some platforms,
+        # so these are asserted as present and non-negative rather than > 0.
+        assert "dependency_ms" in latency, "cross-service time is its own category"
+        assert latency["dependency_ms"] >= 0
+        assert body["dependencies"][0]["duration_ms"] >= 0
         assert latency["total_ms"] >= latency["dependency_ms"] - 1.0
         assert latency["overhead_ms"] >= 0
 
