@@ -29,9 +29,12 @@ _GRID = "rgba(148,163,184,0.18)"
 
 def _base_layout(fig: go.Figure, height: int, title: str | None = None) -> go.Figure:
     """Apply the shared chart styling: transparent, theme-neutral, low chrome."""
+    # Passing title=None renders the literal string "undefined", so only set it
+    # when there is one.
+    if title:
+        fig.update_layout(title=title)
     fig.update_layout(
         height=height,
-        title=title,
         margin=dict(l=8, r=8, t=40 if title else 12, b=8),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",

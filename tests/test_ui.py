@@ -147,3 +147,15 @@ class TestDashboardRuns:
 
         assert not app.exception, [e.value for e in app.exception]
         assert len(app.tabs) == 5
+
+
+class TestChartTitles:
+    def test_untitled_chart_has_no_undefined_title(self) -> None:
+        """Plotly renders a None title as the literal string 'undefined'."""
+        figure = topology_graph({"modules": {}}, {})
+        assert figure.layout.title.text in (None, "")
+
+    def test_titled_chart_keeps_its_title(self) -> None:
+        spans = [{"name": "a", "kind": "llm", "status": "ok",
+                  "started_at": "2026-01-01T00:00:00Z", "duration_ms": 1.0, "service_id": "s"}]
+        assert trace_waterfall(spans, "Trace abc").layout.title.text == "Trace abc"
