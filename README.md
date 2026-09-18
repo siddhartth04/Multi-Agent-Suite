@@ -4,26 +4,18 @@ One logical application made of four **independently deployable** agent modules,
 
 This repository is the **SUT**. It is not the testing platform.
 
+**4 modules · 11 agents · 2 cross-module HTTP dependencies · 2 fully independent modules**
+
+![The application topology: four modules, their agent pipelines, and the cross-module HTTP dependencies](docs/screenshots/1-topology.png)
+
 ## Topology
 
-```text
-                        multi-agent-sut
-                              │
-        ┌─────────────────────┼──────────────────────┐
-        ▼                     ▼                      ▼
-   RESEARCH :8001       FACT CHECKER :8002    MARKETING :8003
-   researcher                fact_researcher       researcher
-        ↓                         ↓                    ↓
-   analyst                   verification          strategist
-        ↓                                               ↓
-   reviewer                                          writer
-        │                         ▲                    ▲
-        └────────── http ─────────┴──────── http ──────┘
-
-                        TRAVEL :8004
-                   planner → search → booking
-                    (no cross-module dependency)
-```
+| Module | Port | Agent pipeline | Depends on |
+|---|---|---|---|
+| **research** | 8001 | researcher → analyst → reviewer | — (independent) |
+| **fact_checker** | 8002 | fact_researcher → verification | research, over HTTP |
+| **marketing** | 8003 | researcher → strategist → writer | research, over HTTP |
+| **travel** | 8004 | planner → search → booking | — (independent) |
 
 - **Research** is independent, so the other two can depend on it safely.
 - **Fact Checker** and **Marketing** depend on Research **over HTTP**, never by importing it. The dependency is optional: if Research is unreachable, they degrade and record the failed call.
@@ -74,17 +66,33 @@ pip install -r requirements-ui.txt
 streamlit run ui/app.py      # http://localhost:8501
 ```
 
-Five tabs:
+Every screenshot below is a real capture of the running system, with real LLM calls against a live provider.
 
-| Tab | What it shows |
-|---|---|
-| **Topology** | Live map of the 4 modules, their 11 agents and the cross-module HTTP edges, with per-service health |
-| **Run** | Execute any module, with per-agent output, tokens and timing |
-| **Traces** | Span waterfall for one request, assembled across every service that saw the trace |
-| **Tokens & Cost** | Per-agent and per-module token breakdown, reasoning tokens, and the `source` of every count |
-| **Failure modes** | Fire each failure scenario and watch the telemetry survive it |
+### Run — drive an agent pipeline
 
-**[Full walkthrough with screenshots →](docs/DASHBOARD.md)**
+![A completed Research run: HTTP 200, three agents, 3,557 tokens in 6,536 ms, with each agent's output and a stacked token chart](docs/screenshots/2-run.png)
+
+Pick a module, type an input, press **Run**. Each agent expands to show the text it actually produced. The **Dependencies** toggle runs a module with or without its upstream call, so you can tell a module's own behaviour apart from its dependency's.
+
+### Traces — one trace across two services
+
+![A distributed trace waterfall: 15 spans across fact_checker and research, with Research's agents nested inside the service_call span](docs/screenshots/3-traces.png)
+
+The clearest evidence in the project. One request to Fact Checker produced **15 spans across 2 processes**, reassembled under a single trace id — `research.request` and its three agents are nested inside the `service_call.research` bar. Bars sit at their real start time, so concurrent work looks concurrent.
+
+### Tokens & Cost — honest accounting
+
+![Token usage: 27,565 tokens observed across 13 traces, broken down per module with the source of every count](docs/screenshots/4-tokens-cost.png)
+
+Usage rolls up **LLM call → agent → module → request**, including tokens reported by a downstream module. Every count carries a `source` (`provider` / `estimated` / `unavailable`), and unreported values stay `null` rather than `0` — counts are never fabricated.
+
+### Failure modes — deterministic faults
+
+![The failure injection panel: six scenarios, with an injected error returning HTTP 500 and a confirmation that the trace stayed correlated](docs/screenshots/5-failure-modes.png)
+
+Six injectable scenarios, one click each. A failed run still returns a complete telemetry document: the trace stays correlated, agents that already ran are still listed, and their tokens are still counted.
+
+**[Full walkthrough →](docs/DASHBOARD.md)**
 
 The dashboard is a **pure consumer of the public HTTP API** — it never imports module or agent code, so everything it displays is exactly what the external testing platform can observe. It also runs with no services up, showing them as unreachable rather than erroring.
 
