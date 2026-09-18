@@ -10,11 +10,8 @@ import os
 from functools import lru_cache
 from typing import Literal
 
-from dotenv import load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-load_dotenv()
 
 FailureMode = Literal["normal", "slow", "error", "timeout", "tool_failure", "dependency_failure"]
 

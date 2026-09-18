@@ -63,6 +63,29 @@ Or all five as containers:
 docker compose up --build
 ```
 
+## Dashboard
+
+A Streamlit control room for driving and observing the system.
+
+```powershell
+pip install -r requirements-ui.txt
+streamlit run ui/app.py      # http://localhost:8501
+```
+
+Five tabs:
+
+| Tab | What it shows |
+|---|---|
+| **Topology** | Live map of the 4 modules, their 11 agents and the cross-module HTTP edges, with per-service health |
+| **Run** | Execute any module, with per-agent output, tokens and timing |
+| **Traces** | Span waterfall for one request, assembled across every service that saw the trace |
+| **Tokens & Cost** | Per-agent and per-module token breakdown, reasoning tokens, and the `source` of every count |
+| **Failure modes** | Fire each failure scenario and watch the telemetry survive it |
+
+The dashboard is a **pure consumer of the public HTTP API** — it never imports module or agent code, so everything it displays is exactly what the external testing platform can observe. It also runs with no services up, showing them as unreachable rather than erroring.
+
+In Docker it comes up alongside the rest at `localhost:8501`; module URLs come from the same `*_URL` environment variables.
+
 ## Service contract
 
 Every module exposes the same endpoints, so all four onboard identically.
@@ -184,7 +207,7 @@ python -m compileall .
 pytest
 ```
 
-182 tests, fully offline — no API key, no network, no running services. LLM calls are replaced with a deterministic fake, so token and latency assertions are exact. Cross-module tests run the real Research app over an in-memory ASGI transport, so requests are genuinely serialised and headers genuinely propagated.
+202 tests, fully offline — no API key, no network, no running services. LLM calls are replaced with a deterministic fake, so token and latency assertions are exact. Cross-module tests run the real Research app over an in-memory ASGI transport, so requests are genuinely serialised and headers genuinely propagated.
 
 | File | Covers |
 |---|---|
@@ -194,6 +217,7 @@ pytest
 | `tests/test_failure_modes.py` | Every failure mode and partial-failure telemetry |
 | `tests/test_gateway.py` | Topology, registry, routing |
 | `tests/test_config_and_tokens.py` | Configuration, token extraction, tools |
+| `tests/test_ui.py` | Dashboard client, charts, and the app script itself |
 
 ## Layout
 
@@ -212,6 +236,7 @@ modules/
     module.py        agent definitions and dependencies (data, not behaviour)
     server.py        ASGI entry point
 gateway/             registry, topology, routing
+ui/                  Streamlit dashboard (api client, charts, app)
 deploy/              one Dockerfile per service
 ```
 

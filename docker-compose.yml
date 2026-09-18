@@ -61,3 +61,15 @@ services:
       MARKETING_URL: http://marketing:8000
       TRAVEL_URL: http://travel:8000
     depends_on: [research, fact-checker, marketing, travel]
+
+  # Optional dashboard. `docker compose up research travel` skips it.
+  ui:
+    build: {context: ., dockerfile: deploy/ui/Dockerfile}
+    ports: ["8501:8501"]
+    environment:
+      GATEWAY_URL: http://gateway:8000
+      RESEARCH_URL: http://research:8000
+      FACT_CHECKER_URL: http://fact-checker:8000
+      MARKETING_URL: http://marketing:8000
+      TRAVEL_URL: http://travel:8000
+    depends_on: [gateway]

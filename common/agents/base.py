@@ -51,13 +51,25 @@ class AgentSpec:
         )
 
     def system_prompt(self) -> str:
-        return (
-            f"You are the {self.role}.\n"
-            f"Goal: {self.goal}\n"
-            f"Background: {self.backstory}\n"
-            f"Produce exactly this deliverable: {self.expected_output}\n"
-            "Be concise and concrete. Never claim an action you did not take."
-        )
+        lines = [
+            f"You are the {self.role}.",
+            f"Goal: {self.goal}",
+            f"Background: {self.backstory}",
+            f"Produce exactly this deliverable: {self.expected_output}",
+            "Be concise and concrete. Never claim an action you did not take.",
+        ]
+        if self.tools:
+            # Tools are executed by the pipeline before the model is called, and
+            # no tool schema is sent. Some models otherwise try to call a tool
+            # themselves, which providers reject outright ("model called a tool"
+            # while tool choice is none). Say plainly that the results are final.
+            lines.append(
+                "Any tool results below have already been gathered for you. "
+                "You cannot call tools, and no tools are available to you. "
+                "Work only with the information provided; if it is thin or empty, "
+                "say so and continue using your own knowledge."
+            )
+        return "\n".join(lines)
 
 
 @dataclass

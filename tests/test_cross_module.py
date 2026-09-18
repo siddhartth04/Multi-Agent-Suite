@@ -11,7 +11,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from common.config import Settings
+from tests.conftest import make_settings as Settings  # ignores any local .env
 from common.service import create_service
 from common.telemetry import TraceContext
 from modules.fact_checker.module import DEFINITION as FACT_CHECKER

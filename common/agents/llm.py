@@ -24,6 +24,17 @@ from common.telemetry import TokenSource, TokenUsage, get_logger
 logger = get_logger(__name__)
 
 
+def _is_unsolicited_tool_call(exc: BaseException) -> bool:
+    """True when a provider rejected the model for calling a tool we never offered.
+
+    Tools are run by the pipeline before the model is called, so no tool schema
+    is sent. Some models still emit a function call, and providers reject it
+    (Groq: "Tool choice is none, but model called a tool").
+    """
+    message = str(exc).lower()
+    return "tool_use_failed" in message or "model called a tool" in message
+
+
 class LLMError(RuntimeError):
     """Raised when an LLM call fails after exhausting retries."""
 
@@ -99,14 +110,47 @@ class LLMClient:
                     "llm.error",
                     extra={"attempt": attempt + 1, "model": self.model, "error": str(exc)[:200]},
                 )
+                if _is_unsolicited_tool_call(exc):
+                    # The model tried to call a tool although none was offered.
+                    # Retrying the same prompt reproduces it, so restate the
+                    # constraint in-band and let the next attempt proceed.
+                    kwargs["messages"] = messages + [
+                        {
+                            "role": "user",
+                            "content": (
+                                "Do not call any tool or emit a function call. No tools "
+                                "are available. Answer directly in plain text using only "
+                                "the information already provided."
+                            ),
+                        }
+                    ]
                 if attempt == attempts - 1:
                     raise LLMError(f"LLM call failed: {exc}") from exc
             else:
                 text = _extract_text(response)
+                usage = extract_usage(response, messages, text, self.settings.model)
+
+                if not text and attempt < attempts - 1:
+                    # A reasoning model can spend the whole output budget thinking
+                    # and return no visible text. Passing that downstream would
+                    # silently starve the next agent, so retry with more headroom.
+                    logger.warning(
+                        "llm.empty_response",
+                        extra={
+                            "attempt": attempt + 1,
+                            "model": self.model,
+                            "reasoning_tokens": usage.reasoning_tokens,
+                            "max_tokens": kwargs.get("max_tokens"),
+                        },
+                    )
+                    kwargs["max_tokens"] = int(kwargs.get("max_tokens") or 800) * 2
+                    await asyncio.sleep(0.4 * (2**attempt))
+                    continue
+
                 return LLMResponse(
                     text=text,
                     model=self.settings.model,
-                    tokens=extract_usage(response, messages, text, self.settings.model),
+                    tokens=usage,
                     retry_count=attempt,
                     finish_reason=_extract_finish_reason(response),
                 )

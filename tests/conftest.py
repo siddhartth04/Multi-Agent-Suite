@@ -26,6 +26,13 @@ from common.agents import llm as llm_module  # noqa: E402
 from common.config import Settings, reset_settings_cache  # noqa: E402
 from common.telemetry.models import TokenSource, TokenUsage  # noqa: E402
 
+# A developer's local .env holds real credentials and a real model name. Tests
+# assert on documented defaults, so the suite must not read it -- otherwise
+# results depend on whose machine is running them.
+def make_settings(**overrides) -> Settings:
+    """Build Settings for a test, ignoring any local .env file."""
+    return Settings(_env_file=None, **overrides)
+
 FAKE_INPUT_TOKENS = 100
 FAKE_OUTPUT_TOKENS = 40
 
@@ -94,7 +101,7 @@ def _clean_settings_cache():
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(
+    return make_settings(
         otel_enabled=False,
         search_enabled=False,
         llm_api_key="test-key",

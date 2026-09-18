@@ -1,0 +1,149 @@
+"""Tests for the dashboard.
+
+The UI must never raise at the user: unreachable services and empty data are
+normal states it has to render. These tests run without any service running.
+"""
+
+from __future__ import annotations
+
+import httpx
+import pytest
+
+from ui.api import MODULE_PORTS, ApiResult, SutClient, default_module_urls
+from ui.components import (
+    agent_token_chart,
+    latency_breakdown_chart,
+    module_token_chart,
+    topology_graph,
+    trace_waterfall,
+)
+
+
+class TestModuleUrls:
+    def test_defaults_are_local_ports(self) -> None:
+        urls = default_module_urls()
+        assert set(urls) == set(MODULE_PORTS)
+        for module_id, port in MODULE_PORTS.items():
+            assert urls[module_id] == f"http://127.0.0.1:{port}"
+
+    def test_environment_overrides_the_default(self, monkeypatch) -> None:
+        """The same image must run against Docker service names or remote hosts."""
+        monkeypatch.setenv("RESEARCH_URL", "http://research:8000/")
+        assert default_module_urls()["research"] == "http://research:8000"
+
+
+class TestClientNeverRaises:
+    def test_unreachable_service_returns_a_failed_result(self) -> None:
+        client = SutClient("http://127.0.0.1:1", {"research": "http://127.0.0.1:1"})
+        result = client.topology()
+
+        assert isinstance(result, ApiResult)
+        assert result.failed
+        assert result.error
+
+    def test_health_of_a_down_module_is_reported_not_raised(self) -> None:
+        client = SutClient("http://127.0.0.1:1", {"research": "http://127.0.0.1:1"})
+        assert client.module_health("research").failed
+        assert client.any_reachable() is False
+
+    def test_a_handled_failure_keeps_its_body(self, monkeypatch) -> None:
+        """A module answers 500 with full telemetry; the UI must still get it."""
+        body = {"status": "error", "error": "Injected failure", "agents": [], "trace_id": "a" * 32}
+
+        def fake_post(url, json=None, timeout=None):
+            return httpx.Response(500, json=body, request=httpx.Request("POST", url))
+
+        monkeypatch.setattr("ui.api.httpx.post", fake_post)
+        result = SutClient().run_module("research", "x")
+
+        assert result.status_code == 500
+        assert result.failed
+        assert result.data == body, "the telemetry document must survive an error status"
+
+
+class TestChartsHandleEmptyData:
+    """Every chart is reachable before any run has happened."""
+
+    def test_waterfall_with_no_spans(self) -> None:
+        assert trace_waterfall([]) is not None
+
+    def test_waterfall_ignores_spans_without_a_start_time(self) -> None:
+        assert trace_waterfall([{"name": "x", "kind": "llm"}]) is not None
+
+    def test_agent_chart_with_no_agents(self) -> None:
+        assert agent_token_chart([]) is not None
+
+    def test_latency_chart_with_no_latency(self) -> None:
+        assert latency_breakdown_chart({}) is not None
+
+    def test_module_chart_with_no_rows(self) -> None:
+        assert module_token_chart([]) is not None
+
+    def test_topology_with_no_modules(self) -> None:
+        assert topology_graph({"modules": {}}, {}) is not None
+
+
+class TestChartsRenderRealShapes:
+    def test_waterfall_draws_one_bar_per_timed_span(self) -> None:
+        spans = [
+            {"name": "research.request", "kind": "request", "status": "ok",
+             "started_at": "2026-01-01T00:00:00Z", "duration_ms": 100.0, "service_id": "s"},
+            {"name": "llm.researcher", "kind": "llm", "status": "ok",
+             "started_at": "2026-01-01T00:00:00.010Z", "duration_ms": 80.0, "service_id": "s"},
+        ]
+        assert len(trace_waterfall(spans).data) == 2
+
+    def test_waterfall_marks_a_failed_span(self) -> None:
+        spans = [
+            {"name": "llm.x", "kind": "llm", "status": "error", "error_type": "LLMError",
+             "started_at": "2026-01-01T00:00:00Z", "duration_ms": 5.0, "service_id": "s"},
+        ]
+        figure = trace_waterfall(spans)
+        assert "error" in figure.data[0].hovertemplate
+
+    def test_agent_chart_includes_reasoning_when_reported(self) -> None:
+        agents = [
+            {"agent_id": "researcher",
+             "tokens": {"input_tokens": 100, "output_tokens": 50, "reasoning_tokens": 30}},
+        ]
+        names = {trace.name for trace in agent_token_chart(agents).data}
+        assert names == {"input", "output", "reasoning"}
+
+    def test_agent_chart_omits_reasoning_when_absent(self) -> None:
+        agents = [{"agent_id": "a", "tokens": {"input_tokens": 10, "output_tokens": 5}}]
+        names = {trace.name for trace in agent_token_chart(agents).data}
+        assert names == {"input", "output"}
+
+    def test_latency_chart_skips_empty_categories(self) -> None:
+        figure = latency_breakdown_chart(
+            {"total_ms": 100, "llm_ms": 80, "tool_ms": 0, "dependency_ms": 0, "overhead_ms": 20}
+        )
+        assert list(figure.data[0].y) == ["LLM", "Overhead"]
+
+    def test_topology_draws_dependency_edges(self) -> None:
+        topology = {
+            "modules": {
+                "research": {"agents": ["researcher"], "independent": True, "depends_on": []},
+                "fact_checker": {"agents": ["verification"], "independent": False,
+                                 "depends_on": ["research"]},
+            },
+            "module_dependencies": [{"from": "fact_checker", "to": "research"}],
+        }
+        figure = topology_graph(topology, {"research": True, "fact_checker": False})
+        # one edge line + two module nodes
+        assert len(figure.data) == 3
+
+
+class TestDashboardRuns:
+    """The app script itself must execute without raising, services or not."""
+
+    def test_app_renders_with_no_services_running(self) -> None:
+        pytest.importorskip("streamlit")
+        from streamlit.testing.v1 import AppTest
+
+        app = AppTest.from_file("ui/app.py", default_timeout=60)
+        app.session_state["_"] = None
+        app.run()
+
+        assert not app.exception, [e.value for e in app.exception]
+        assert len(app.tabs) == 5

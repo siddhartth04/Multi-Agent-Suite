@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from common.agents.llm import estimate_usage, extract_usage
-from common.config import Settings
+from tests.conftest import make_settings as Settings  # ignores any local .env
 from common.telemetry import TokenSource
 from common.tools import web_search
 
@@ -172,3 +172,64 @@ class TestWebSearchTool:
         assert "A concise answer." in result
         assert "https://example.com/a" in result
         assert "Related fact" in result
+
+
+class TestEmptyResponseRetry:
+    """A reasoning model can burn its whole output budget thinking.
+
+    The call succeeds and reports tokens, but returns no visible text. That must
+    be retried with more headroom rather than silently starving the next agent.
+    """
+
+    async def test_empty_text_is_retried_with_a_larger_budget(self, monkeypatch) -> None:
+        from common.agents.llm import LLMClient
+
+        calls: list[int] = []
+
+        async def fake_acompletion(**kwargs):
+            calls.append(kwargs["max_tokens"])
+            empty = len(calls) == 1
+            return {
+                "choices": [
+                    {"message": {"content": "" if empty else "real answer"},
+                     "finish_reason": "length" if empty else "stop"}
+                ],
+                "usage": {"prompt_tokens": 50, "completion_tokens": 400, "total_tokens": 450,
+                          "completion_tokens_details": {"reasoning_tokens": 400 if empty else 20}},
+            }
+
+        import litellm
+
+        monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+        settings = Settings(llm_api_key="k", llm_max_tokens=400, llm_max_retries=2)
+
+        response = await LLMClient(settings).complete("sys", "user")
+
+        assert response.text == "real answer"
+        assert len(calls) == 2, "the empty response must trigger exactly one retry"
+        assert calls[1] > calls[0], "the retry must raise the output budget"
+
+    async def test_empty_text_on_the_last_attempt_is_returned_not_looped(
+        self, monkeypatch
+    ) -> None:
+        """Never retry forever: the final attempt's result is reported as-is."""
+        from common.agents.llm import LLMClient
+
+        calls: list[int] = []
+
+        async def always_empty(**kwargs):
+            calls.append(1)
+            return {
+                "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+                "usage": {"prompt_tokens": 50, "completion_tokens": 400, "total_tokens": 450},
+            }
+
+        import litellm
+
+        monkeypatch.setattr(litellm, "acompletion", always_empty)
+        settings = Settings(llm_api_key="k", llm_max_tokens=400, llm_max_retries=1)
+
+        response = await LLMClient(settings).complete("sys", "user")
+
+        assert response.text == ""
+        assert len(calls) == 2, "attempts are bounded by llm_max_retries"
