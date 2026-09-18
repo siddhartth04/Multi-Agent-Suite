@@ -1,0 +1,5 @@
+print("Lightweight Modular Multi-Agent Application")
+print("Research :8001 | Fact Checker :8002 | Marketing :8003 | Travel :8004")
+print("Related: Research -> Fact Checker, Research -> Marketing")
+print("Independent: Travel")
+print("See README.md for separate-terminal, Docker, and gateway modes.")

@@ -1,0 +1,17 @@
+services:
+  research:
+    build: {context: ., dockerfile: deploy/research/Dockerfile}
+    ports: ["8001:8000"]
+  fact-checker:
+    build: {context: ., dockerfile: deploy/fact_checker/Dockerfile}
+    ports: ["8002:8000"]
+    environment: {RESEARCH_URL: http://research:8000}
+    depends_on: [research]
+  marketing:
+    build: {context: ., dockerfile: deploy/marketing/Dockerfile}
+    ports: ["8003:8000"]
+    environment: {RESEARCH_URL: http://research:8000}
+    depends_on: [research]
+  travel:
+    build: {context: ., dockerfile: deploy/travel/Dockerfile}
+    ports: ["8004:8000"]
