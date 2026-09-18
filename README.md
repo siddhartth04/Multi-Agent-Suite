@@ -33,6 +33,8 @@ Independent deployment and dependency are separate concerns: all four run as sep
 
 ## Quick start
 
+> Step-by-step instructions, including troubleshooting: **[RUNNING.md](RUNNING.md)**
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
