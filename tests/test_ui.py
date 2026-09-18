@@ -6,6 +6,9 @@ normal states it has to render. These tests run without any service running.
 
 from __future__ import annotations
 
+import contextlib
+import pathlib
+
 import httpx
 import pytest
 
@@ -191,3 +194,55 @@ class TestChartTitles:
         spans = [{"name": "a", "kind": "llm", "status": "ok",
                   "started_at": "2026-01-01T00:00:00Z", "duration_ms": 1.0, "service_id": "s"}]
         assert trace_waterfall(spans, "Trace abc").layout.title.text == "Trace abc"
+
+
+class TestAgentOutputRendering:
+    """An agent's deliverable is markdown and must be shown in full.
+
+    It used to go into a fixed-height HTML div, which both left the markdown
+    unrendered and cut long output off part way through.
+    """
+
+    def test_output_is_rendered_as_markdown_not_raw_html(self) -> None:
+        source = pathlib.Path("ui/app.py").read_text(encoding="utf-8")
+
+        assert "agent-out" not in source, "the clipping fixed-height box must be gone"
+        assert "max-height:320px" not in source
+
+    def test_renderer_writes_the_whole_output(self, monkeypatch) -> None:
+        import ui.app as app
+
+        written: list[str] = []
+        monkeypatch.setattr(app.st, "markdown", lambda text, **kw: written.append(text))
+        monkeypatch.setattr(app.st, "caption", lambda *a, **kw: None)
+        monkeypatch.setattr(app.st, "code", lambda *a, **kw: None)
+        monkeypatch.setattr(app.st, "expander", lambda *a, **kw: contextlib.nullcontext())
+
+        long_output = "# Heading\n\n" + ("a paragraph of text. " * 400)
+        app.render_agent_output(long_output)
+
+        assert written, "the output must be rendered"
+        assert written[0] == long_output, "the full text, untruncated"
+
+    def test_missing_output_does_not_raise(self, monkeypatch) -> None:
+        import ui.app as app
+
+        monkeypatch.setattr(app.st, "caption", lambda *a, **kw: None)
+        app.render_agent_output(None)
+        app.render_agent_output("")
+
+
+class TestChartKeys:
+    """Streamlit derives a chart's id from its type and parameters.
+
+    The same chart drawn in two tabs collides and raises
+    StreamlitDuplicateElementId, so every call site passes an explicit key.
+    """
+
+    def test_every_chart_call_passes_a_key(self) -> None:
+        source = pathlib.Path("ui/app.py").read_text(encoding="utf-8")
+
+        calls = source.count("st.plotly_chart(")
+        keyed = source.count("key=")
+        assert calls > 0
+        assert keyed >= calls, f"{calls} charts but only {keyed} keys"

@@ -69,7 +69,6 @@ st.markdown(
          font-size:11px;font-weight:600;letter-spacing:.02em;}
   .mono {font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;}
   .card {border:1px solid rgba(148,163,184,.25); border-radius:12px; padding:14px 16px; margin-bottom:10px;}
-  .agent-out {white-space:pre-wrap; font-size:13px; line-height:1.5; max-height:320px; overflow-y:auto;}
   h1 {letter-spacing:-.02em;}
   /* The module bar: bigger, more prominent than the tabs underneath it. */
   div[data-testid="stHorizontalBlock"] .module-chip {padding:2px 0 6px;}
@@ -116,6 +115,23 @@ def render_tokens(tokens: dict[str, Any]) -> None:
     st.caption(f"Token source: **{source}** — {note}")
 
 
+def render_agent_output(output: str | None) -> None:
+    """Show an agent's deliverable in full.
+
+    Agents return markdown -- headings, bold, tables -- so it is rendered rather
+    than dumped into a fixed-height box, where it was both unformatted and cut
+    off part way through. The raw text stays one click away.
+    """
+    if not output:
+        st.caption("(no output)")
+        return
+
+    st.markdown(output)
+    st.caption(f"{len(output):,} characters")
+    with st.expander("Raw text"):
+        st.code(output, language="markdown")
+
+
 def render_run_result(body: dict[str, Any], status_code: int | None, elapsed: float) -> None:
     """The shared result panel: status, dependencies, agents, output."""
     status = body.get("status", "unknown")
@@ -153,13 +169,14 @@ def render_run_result(body: dict[str, Any], status_code: int | None, elapsed: fl
     agents = body.get("agents") or []
     if agents:
         st.markdown("#### Agents")
-        for agent in agents:
+        for index, agent in enumerate(agents):
             tok = agent.get("tokens") or {}
             with st.expander(
                 f"{'✅' if agent.get('status') == 'ok' else '❌'}  "
                 f"{agent.get('agent_id')} — {agent.get('role','')}  ·  "
                 f"{tok.get('total_tokens',0)} tokens",
-                expanded=False,
+                # The last agent produced the module's answer, so open it.
+                expanded=index == len(agents) - 1,
             ):
                 cols = st.columns(4)
                 cols[0].metric("Input", tok.get("input_tokens", 0))
@@ -168,14 +185,14 @@ def render_run_result(body: dict[str, Any], status_code: int | None, elapsed: fl
                 cols[3].metric("Duration", f"{agent.get('duration_ms',0):.0f} ms")
                 if agent.get("error"):
                     st.error(agent["error"])
-                st.markdown(
-                    f'<div class="agent-out">{(agent.get("output") or "(no output)")}</div>',
-                    unsafe_allow_html=True,
-                )
+                render_agent_output(agent.get("output"))
         st.plotly_chart(agent_token_chart(agents), width="stretch",
-                        config={"displayModeBar": False})
+                        config={"displayModeBar": False}, key="run_agent_tokens")
 
-    if body.get("result"):
+    # `result` is the final agent's output, which is already shown above, so
+    # only repeat it when it differs (or when no agents were reported).
+    last_output = agents[-1].get("output") if agents else None
+    if body.get("result") and body["result"] != last_output:
         st.markdown("#### Final result")
         st.markdown(body["result"])
 
@@ -224,7 +241,8 @@ def render_trace_view(client: SutClient, module_id: str, trace_id: str | None = 
         st.markdown(span_kind_legend(), unsafe_allow_html=True)
         all_spans = [s for seg in segments.values() for s in seg.get("spans", [])]
         st.plotly_chart(trace_waterfall(all_spans, f"Trace {tid[:16]}…"),
-                        width="stretch", config={"displayModeBar": False})
+                        width="stretch", config={"displayModeBar": False},
+                        key=f"waterfall_{module_id}_{tid}")
 
         for service, segment in segments.items():
             with st.expander(f"Spans recorded by `{service}` ({len(segment.get('spans', []))})"):
@@ -246,7 +264,8 @@ def render_trace_view(client: SutClient, module_id: str, trace_id: str | None = 
     else:
         st.markdown(span_kind_legend(), unsafe_allow_html=True)
         st.plotly_chart(trace_waterfall(trace.get("spans", [])),
-                        width="stretch", config={"displayModeBar": False})
+                        width="stretch", config={"displayModeBar": False},
+                        key=f"waterfall_local_{module_id}_{tid}")
         st.caption("Gateway unavailable — showing only this service's segment.")
 
 
@@ -327,7 +346,7 @@ if scope == OVERVIEW:
             c[3].metric("Agents", sum(len(m.get("agents", [])) for m in modules.values()))
 
             st.plotly_chart(topology_graph(data, health), width="stretch",
-                            config={"displayModeBar": False})
+                            config={"displayModeBar": False}, key="topology")
             st.caption(
                 "Solid ring = reachable. Dotted arrows are cross-module HTTP dependencies. "
                 "Research is independent, so Fact Checker and Marketing can depend on it; "
@@ -368,7 +387,7 @@ if scope == OVERVIEW:
             c[3].metric("Traces", sum(r["traces"] for r in rows))
 
             st.plotly_chart(module_token_chart(rows), width="stretch",
-                            config={"displayModeBar": False})
+                            config={"displayModeBar": False}, key="module_tokens")
             st.dataframe(rows, width="stretch", hide_index=True)
             st.caption(
                 "`source` records where the counts came from: **provider** (reported), "
@@ -500,14 +519,16 @@ else:
             st.markdown("#### Last run")
             render_tokens(body.get("tokens") or {})
             st.plotly_chart(latency_breakdown_chart(body.get("latency") or {}),
-                            width="stretch", config={"displayModeBar": False})
+                            width="stretch", config={"displayModeBar": False},
+                            key=f"latency_{module_id}")
             st.caption(
                 "`total_ms` is measured wall clock, never a sum of spans — so concurrent "
                 "work is not double counted, and overhead never goes negative."
             )
             if body.get("agents"):
                 st.plotly_chart(agent_token_chart(body["agents"]), width="stretch",
-                                config={"displayModeBar": False})
+                                config={"displayModeBar": False},
+                                key=f"tokens_tab_agents_{module_id}")
 
     # ---- failure modes ------------------------------------------------
     with tab_failures:
@@ -583,7 +604,8 @@ else:
                 if trace.ok:
                     st.markdown(span_kind_legend(), unsafe_allow_html=True)
                     st.plotly_chart(trace_waterfall(trace.data.get("spans", [])),
-                                    width="stretch", config={"displayModeBar": False})
+                                    width="stretch", config={"displayModeBar": False},
+                                    key=f"failure_waterfall_{module_id}")
 
                 with st.expander("Raw response"):
                     st.json(body)
