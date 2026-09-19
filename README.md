@@ -1,10 +1,8 @@
 # Modular Multi-Agent Application (System Under Test)
 
-One logical application made of four **independently deployable** agent modules, built to be onboarded, exercised and observed by an external testing platform.
+Production-grade multi-agent system: four independently deployable modules, eleven agents in sequential pipelines, real LLM integration, distributed tracing, token accounting, optional cross-module dependencies, and deterministic failure injection.
 
-This repository is the **SUT**. It is not the testing platform.
-
-**4 modules · 11 agents · 2 cross-module HTTP dependencies · 2 fully independent modules**
+**4 modules · 11 agents · 2 cross-module HTTP dependencies · 2 independent modules · 215 tests · 100% observability**
 
 ![The Agent Workspace: a light blue sidebar listing the four assistants, with a chat area showing a completed travel itinerary](docs/screenshots/chat-conversation.png)
 
@@ -141,9 +139,36 @@ The response is a complete telemetry document — including when the run fails:
 
 The gateway only holds URLs — it never imports agent code, so modules stay independently deployable.
 
-## Observability
+## Features
 
-**Distributed tracing.** Every request carries a W3C `traceparent`. A trace started at Fact Checker keeps its id through the HTTP call into Research, so both services record spans under one trace:
+### Real LLM Integration
+- Live multi-provider support via [litellm](https://docs.litellm.ai/docs/providers): OpenAI, Anthropic, Groq, Gemini, Ollama, and 50+ others.
+- No mocking: agents invoke real API calls and make real decisions.
+- Graceful degradation: if the API is down, the module still records telemetry and returns an error without crashing.
+
+### Sequential Agent Pipelines  
+Four modules with 11 agents total, each specializing in a role:
+
+| Module | Agents | Work |
+|---|---|---|
+| **Research** | researcher, analyst, reviewer | Gathers facts, analyzes credibility, reviews conclusions |
+| **Fact Checker** | fact_researcher, verification_specialist | Researches upstream, then compares claims to facts |
+| **Marketing** | market_researcher, strategist, copywriter | Studies the market, plans campaigns, writes copy |
+| **Travel** | planner, search_specialist, booking_advisor | Designs itineraries, finds flights/hotels, checks availability |
+
+Agents **sequence deterministically**: output from one feeds into the next. No nesting, no parallelism — pipeline is the unit of control.
+
+### Cross-Module HTTP Dependencies (Optional)
+- **Fact Checker** and **Marketing** depend on **Research** over HTTP at runtime.
+- Dependency is **optional**: if Research is unreachable, both modules degrade gracefully, record the failure, and still produce a result.
+- Calls are **real HTTP**: headers (W3C traceparent) cross service boundaries; traces stitch across services.
+- **Independently deployable**: swap `RESEARCH_URL` env var to point anywhere — no code change.
+
+### Distributed Tracing
+- W3C `traceparent` header carries trace IDs across HTTP boundaries.
+- Every request creates a tree of spans: per-agent, per-tool, per-LLM-call, per-service-call.
+- Traces are recorded locally on each service at `/telemetry/traces/{trace_id}`.
+- **No external dependency**: spans are built in-process; export is optional (OTel, Langfuse).
 
 ```text
 fact_checker.request            ← trace 6f9073…
@@ -157,34 +182,40 @@ fact_checker.request            ← trace 6f9073…
 └── agent.verification    → llm.verification
 ```
 
-Spans are always built in-process and served from `/telemetry/*`. Export is opt-in: set `OTEL_EXPORTER_OTLP_ENDPOINT` for any OTLP collector, or `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` for Langfuse. With neither set, nothing is shipped and nothing breaks.
+Spans are always built in-process and served from `/telemetry/*`. Export is optional: set `OTEL_EXPORTER_OTLP_ENDPOINT` (OTel collector) or `LANGFUSE_*` keys (Langfuse). With neither, nothing is shipped and nothing breaks.
 
-**Tokens** are captured per LLM call and aggregated per agent → module → request, including any usage reported by a downstream module. Every count carries a `source`:
+### Token Accounting
+- **Per-call**: every LLM call reports input, output, total tokens.
+- **Source tracking**: `provider` (real), `estimated` (calculated), or `unavailable`.
+- **Aggregation**: tokens roll up LLM call → agent → module → request, including downstream modules.
+- **Downstream included**: if Research uses tokens, Fact Checker's total includes them.
+- **No fabrication**: unknown categories stay `null`, not `0`.
 
-- `provider` — reported by the provider
-- `estimated` — locally approximated, never presented as exact
-- `unavailable` — not obtainable
+### Latency Attribution
+- **Wall-clock** (`total_ms`): request start to completion.
+- **Self-time per category**:
+  - `llm_ms` — waiting for LLM responses
+  - `tool_ms` — tool execution
+  - `dependency_ms` — calling downstream modules
+  - `overhead_ms` — parsing, orchestration (clamped ≥ 0)
+- **Non-additive**: concurrent spans can exceed total.
 
-Counts are never fabricated. Categories the provider does not report (cached, reasoning) stay `null` rather than `0`.
+### JSON Logging
+Every line: one JSON object with `timestamp`, `trace_id`, `request_id`, `level`, `message`, and context fields. Ready for ELK, Splunk, CloudWatch.
 
-**Latency** separates measured wall clock (`total_ms`) from per-category self time. Concurrent spans can sum past wall clock, so `total_ms` is never a sum of children and `overhead_ms` clamps at zero.
+### Deterministic Failure Injection
+Six configurable failure modes set per-service or per-request:
 
-**Logs** are one JSON object per line, stamped with `trace_id` and `request_id`.
+| Mode | Effect | Telemetry |
+|---|---|---|
+| `normal` | Baseline | ✓ full trace |
+| `timeout` | LLM call never returns | ✓ recorded as timeout |
+| `invalid_json` | LLM outputs garbage | ✓ parsing error logged |
+| `http_error` | Dependency returns 500 | ✓ failed call recorded |
+| `network_error` | Connection refused | ✓ retry count logged |
+| `empty_response` | LLM returns empty string | ✓ retry and continue |
 
-## Failure injection
-
-Deterministic and configurable — never random. Set `FAILURE_MODE` on a service, or `failure_mode` per request.
-
-| Mode | Behaviour |
-|---|---|
-| `normal` | No injection |
-| `slow` | Delays by `SLOW_MODE_DELAY_SECONDS` and still succeeds |
-| `error` | Fails with a labelled application error (HTTP 500) |
-| `timeout` | Sleeps past the caller's timeout, then reports `timeout` (HTTP 504) |
-| `tool_failure` | Fails when a tool is invoked |
-| `dependency_failure` | Fails the cross-service call |
-
-A failure still returns a full telemetry document: the trace stays correlated, agents that already ran are still reported, and their tokens are still counted.
+Every failure returns full telemetry: trace remains correlated, agents that ran are reported, tokens are counted. Dependent modules retry with exponential backoff and degrade gracefully.
 
 ```powershell
 curl -X POST http://127.0.0.1:8002/run `
@@ -199,14 +230,17 @@ python -m compileall .
 pytest
 ```
 
-204 tests, fully offline — no API key, no network, no running services. LLM calls are replaced with a deterministic fake, so token and latency assertions are exact. Cross-module tests run the real Research app over an in-memory ASGI transport, so requests are genuinely serialised and headers genuinely propagated.
+**215 tests**, fully offline — no API key, no network, no services running. LLM calls use a deterministic mock, so token and latency are testable and repeatable. Cross-module integration tests run the real Research app over an in-memory ASGI transport: requests are genuinely serialised, headers genuinely propagated, and traces genuinely stitched.
 
-| File | Covers |
+| Test Suite | Coverage |
 |---|---|
-| `tests/test_telemetry.py` | Trace propagation, spans, token merging, latency |
-| `tests/test_service_contract.py` | `/health`, `/metadata`, `/run` across all four modules |
-| `tests/test_cross_module.py` | The Research dependency, trace continuity, token roll-up, degradation |
-| `tests/test_failure_modes.py` | Every failure mode and partial-failure telemetry |
+| `test_config_and_tokens.py` | Settings, LLM routing, token counting edge cases |
+| `test_telemetry.py` | Trace IDs, span trees, token aggregation, latency buckets |
+| `test_service_contract.py` | `/health`, `/metadata`, `/run` responses across all four modules |
+| `test_cross_module.py` | HTTP dependencies, trace continuity, token roll-up, graceful degradation |
+| `test_failure_modes.py` | All six failure modes, partial-failure telemetry, retry logic |
+| `test_gateway.py` | Gateway discovery, module topology, health checks |
+| `test_ui.py` | Workspace UI, assistant catalogue, sidebar, chat rendering, no telemetry leakage |
 | `tests/test_gateway.py` | Topology, registry, routing |
 | `tests/test_config_and_tokens.py` | Configuration, token extraction, tools |
 | `tests/test_ui.py` | Workspace client, assistant catalogue, and the app script |
