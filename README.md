@@ -1,6 +1,6 @@
-# Modular Multi-Agent Application (System Under Test)
+# Executive Intelligence (System Under Test)
 
-Production-grade multi-agent system: four independently deployable modules, eleven agents in sequential pipelines, real LLM integration, distributed tracing, token accounting, optional cross-module dependencies, and deterministic failure injection.
+Production-grade Executive Intelligence system: four independently deployable modules, eleven agents in sequential pipelines, real LLM integration, distributed tracing, token accounting, optional cross-module dependencies, and deterministic failure injection.
 
 **4 modules · 11 agents · 2 cross-module HTTP dependencies · 2 independent modules · 215 tests · 100% observability**
 
@@ -105,7 +105,7 @@ The response is a complete telemetry document — including when the run fails:
 
 ```jsonc
 {
-  "application_id": "multi-agent-sut",
+  "application_id": "executive-intelligence",
   "module_id": "fact_checker",
   "trace_id": "6f907369b1ff70bd8b5f1a9167b20b0a",
   "request_id": "req_81c094ed36f2e850",

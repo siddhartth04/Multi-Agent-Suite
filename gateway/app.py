@@ -32,7 +32,7 @@ configure_logging("gateway", "gateway", settings.log_level)
 logger = get_logger(__name__)
 
 app = FastAPI(
-    title=f"Modular Multi-Agent Gateway ({APPLICATION_ID})",
+    title=f"Executive Intelligence Gateway ({APPLICATION_ID})",
     description="Discovery and routing for the independently deployed agent modules.",
     version=APPLICATION_VERSION,
 )

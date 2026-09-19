@@ -15,7 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 FailureMode = Literal["normal", "slow", "error", "timeout", "tool_failure", "dependency_failure"]
 
-APPLICATION_ID = "multi-agent-sut"
+APPLICATION_ID = "executive-intelligence"
 APPLICATION_VERSION = "1.0.0"
 
 

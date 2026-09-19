@@ -165,5 +165,5 @@ class TestGatewayHealth:
     def test_root_advertises_the_endpoints(self, gateway_client) -> None:
         body = gateway_client.get("/").json()
 
-        assert body["application_id"] == "multi-agent-sut"
+        assert body["application_id"] == "executive-intelligence"
         assert "/topology" in body["endpoints"]

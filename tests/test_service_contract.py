@@ -34,7 +34,7 @@ class TestHealth:
         body = client.get("/health").json()
 
         assert body["status"] in {"ok", "degraded"}
-        assert body["application_id"] == "multi-agent-sut"
+        assert body["application_id"] == "executive-intelligence"
         assert body["module_id"] == definition.module_id
         assert body["service_id"] == definition.service_id
         assert body["uptime_seconds"] >= 0

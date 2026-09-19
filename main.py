@@ -8,7 +8,7 @@ from gateway.registry import REGISTRY, dependency_edges
 
 
 def main() -> None:
-    print("Modular Multi-Agent Application (System Under Test)\n")
+    print("Executive Intelligence (System Under Test)\n")
 
     print("Modules:")
     for module in REGISTRY:
