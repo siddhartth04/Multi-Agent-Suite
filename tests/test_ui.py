@@ -1,25 +1,22 @@
-"""Tests for the dashboard.
+"""Tests for the agent workspace.
 
-The UI must never raise at the user: unreachable services and empty data are
-normal states it has to render. These tests run without any service running.
+The workspace is a demo surface, so two things matter most: it must never show
+a technical failure to the audience, and it must never leak telemetry (tokens,
+traces, spans) into the interface.
+
+Every test runs without any service running.
 """
 
 from __future__ import annotations
 
-import contextlib
 import pathlib
 
 import httpx
 import pytest
 
 from ui.api import MODULE_PORTS, ApiResult, SutClient, default_module_urls
-from ui.components import (
-    agent_token_chart,
-    latency_breakdown_chart,
-    module_token_chart,
-    topology_graph,
-    trace_waterfall,
-)
+
+APP_SOURCE = pathlib.Path("ui/app.py").read_text(encoding="utf-8")
 
 
 class TestModuleUrls:
@@ -36,22 +33,17 @@ class TestModuleUrls:
 
 
 class TestClientNeverRaises:
-    def test_unreachable_service_returns_a_failed_result(self) -> None:
+    def test_unreachable_module_returns_a_failed_result(self) -> None:
         client = SutClient("http://127.0.0.1:1", {"research": "http://127.0.0.1:1"})
-        result = client.topology()
+        result = client.module_health("research")
 
         assert isinstance(result, ApiResult)
         assert result.failed
         assert result.error
 
-    def test_health_of_a_down_module_is_reported_not_raised(self) -> None:
-        client = SutClient("http://127.0.0.1:1", {"research": "http://127.0.0.1:1"})
-        assert client.module_health("research").failed
-        assert client.any_reachable() is False
-
     def test_a_handled_failure_keeps_its_body(self, monkeypatch) -> None:
-        """A module answers 500 with full telemetry; the UI must still get it."""
-        body = {"status": "error", "error": "Injected failure", "agents": [], "trace_id": "a" * 32}
+        """A module answers 500 with a body; the caller must still receive it."""
+        body = {"status": "error", "error": "Injected failure", "result": None}
 
         def fake_post(url, json=None, timeout=None):
             return httpx.Response(500, json=body, request=httpx.Request("POST", url))
@@ -61,85 +53,75 @@ class TestClientNeverRaises:
 
         assert result.status_code == 500
         assert result.failed
-        assert result.data == body, "the telemetry document must survive an error status"
+        assert result.data == body
 
 
-class TestChartsHandleEmptyData:
-    """Every chart is reachable before any run has happened."""
+class TestAssistantCatalogue:
+    """The catalogue is what the audience sees, so it must cover every module."""
 
-    def test_waterfall_with_no_spans(self) -> None:
-        assert trace_waterfall([]) is not None
+    def test_every_module_has_an_assistant(self) -> None:
+        import ui.app as app
 
-    def test_waterfall_ignores_spans_without_a_start_time(self) -> None:
-        assert trace_waterfall([{"name": "x", "kind": "llm"}]) is not None
+        assert set(app.ASSISTANTS) == set(MODULE_PORTS)
 
-    def test_agent_chart_with_no_agents(self) -> None:
-        assert agent_token_chart([]) is not None
+    def test_each_assistant_is_fully_described(self) -> None:
+        import ui.app as app
 
-    def test_latency_chart_with_no_latency(self) -> None:
-        assert latency_breakdown_chart({}) is not None
+        for module_id, spec in app.ASSISTANTS.items():
+            for field in ("name", "icon", "tagline", "placeholder", "team", "examples"):
+                assert spec.get(field), f"{module_id} is missing {field}"
+            assert len(spec["examples"]) >= 2, f"{module_id} needs example prompts"
 
-    def test_module_chart_with_no_rows(self) -> None:
-        assert module_token_chart([]) is not None
+    def test_team_sizes_match_the_real_agent_pipelines(self) -> None:
+        """The named specialists must match how many agents actually run."""
+        import ui.app as app
 
-    def test_topology_with_no_modules(self) -> None:
-        assert topology_graph({"modules": {}}, {}) is not None
+        expected = {"research": 3, "fact_checker": 2, "marketing": 3, "travel": 3}
+        for module_id, count in expected.items():
+            assert len(app.ASSISTANTS[module_id]["team"]) == count
+
+    def test_no_internal_agent_ids_are_shown(self) -> None:
+        """The audience sees role names, never snake_case internals."""
+        import ui.app as app
+
+        for spec in app.ASSISTANTS.values():
+            for member in spec["team"]:
+                assert "_" not in member, f"{member} looks like an internal id"
 
 
-class TestChartsRenderRealShapes:
-    def test_waterfall_draws_one_bar_per_timed_span(self) -> None:
-        spans = [
-            {"name": "research.request", "kind": "request", "status": "ok",
-             "started_at": "2026-01-01T00:00:00Z", "duration_ms": 100.0, "service_id": "s"},
-            {"name": "llm.researcher", "kind": "llm", "status": "ok",
-             "started_at": "2026-01-01T00:00:00.010Z", "duration_ms": 80.0, "service_id": "s"},
-        ]
-        assert len(trace_waterfall(spans).data) == 2
+class TestNoTelemetryInTheInterface:
+    """This screen is the product, not the instrumentation."""
 
-    def test_waterfall_marks_a_failed_span(self) -> None:
-        spans = [
-            {"name": "llm.x", "kind": "llm", "status": "error", "error_type": "LLMError",
-             "started_at": "2026-01-01T00:00:00Z", "duration_ms": 5.0, "service_id": "s"},
-        ]
-        figure = trace_waterfall(spans)
-        assert "error" in figure.data[0].hovertemplate
-
-    def test_agent_chart_includes_reasoning_when_reported(self) -> None:
-        agents = [
-            {"agent_id": "researcher",
-             "tokens": {"input_tokens": 100, "output_tokens": 50, "reasoning_tokens": 30}},
-        ]
-        names = {trace.name for trace in agent_token_chart(agents).data}
-        assert names == {"input", "output", "reasoning"}
-
-    def test_agent_chart_omits_reasoning_when_absent(self) -> None:
-        agents = [{"agent_id": "a", "tokens": {"input_tokens": 10, "output_tokens": 5}}]
-        names = {trace.name for trace in agent_token_chart(agents).data}
-        assert names == {"input", "output"}
-
-    def test_latency_chart_skips_empty_categories(self) -> None:
-        figure = latency_breakdown_chart(
-            {"total_ms": 100, "llm_ms": 80, "tool_ms": 0, "dependency_ms": 0, "overhead_ms": 20}
+    @pytest.mark.parametrize(
+        # Telemetry field names, not HTML: "<span>" is a layout tag, not a trace span.
+        "term",
+        ["trace_id", "request_id", "span_id", "tokens", "duration_ms",
+         "failure_mode", "http_status", "latency"],
+    )
+    def test_telemetry_fields_are_not_rendered(self, term: str) -> None:
+        # Strip comments and docstrings; only what reaches the screen counts.
+        rendered = "\n".join(
+            line for line in APP_SOURCE.splitlines()
+            if not line.strip().startswith("#")
         )
-        assert list(figure.data[0].y) == ["LLM", "Overhead"]
+        _, _, after_docstring = rendered.partition('"""')
+        _, _, body = after_docstring.partition('"""')
 
-    def test_topology_draws_dependency_edges(self) -> None:
-        topology = {
-            "modules": {
-                "research": {"agents": ["researcher"], "independent": True, "depends_on": []},
-                "fact_checker": {"agents": ["verification"], "independent": False,
-                                 "depends_on": ["research"]},
-            },
-            "module_dependencies": [{"from": "fact_checker", "to": "research"}],
-        }
-        figure = topology_graph(topology, {"research": True, "fact_checker": False})
-        # one edge line + two module nodes
-        assert len(figure.data) == 3
+        assert term not in body, f"{term} must not appear in the interface"
+
+    def test_no_charts_are_imported(self) -> None:
+        """The old telemetry dashboard's charting must not come back.
+
+        `streamlit.components.v1` is unrelated -- it carries the script that
+        keeps the sidebar reopenable.
+        """
+        assert "plotly" not in APP_SOURCE
+        assert "ui.components" not in APP_SOURCE
+        assert "agent_token_chart" not in APP_SOURCE
+        assert "trace_waterfall" not in APP_SOURCE
 
 
 class TestDashboardRuns:
-    """The app script itself must execute without raising, services or not."""
-
     @staticmethod
     def _app():
         pytest.importorskip("streamlit")
@@ -151,98 +133,123 @@ class TestDashboardRuns:
 
     def test_app_renders_with_no_services_running(self) -> None:
         app = self._app()
-
         assert not app.exception, [e.value for e in app.exception]
-        # The application overview: topology, traces, tokens.
-        assert len(app.tabs) == 3
 
-    def test_scope_bar_offers_the_overview_and_every_module(self) -> None:
-        """Each module is its own page, selected from the bar above the tabs."""
+    def test_sidebar_lists_every_assistant(self) -> None:
+        import ui.app as app_module
+
+        app = self._app()
+        labels = " ".join(b.label for b in app.button)
+        for spec in app_module.ASSISTANTS.values():
+            assert spec["name"] in labels, f"{spec['name']} missing from the sidebar"
+
+    def test_switching_assistant_changes_the_view(self) -> None:
+        app = self._app()
+        app.session_state["assistant"] = "travel"
+        app.run()
+
+        assert not app.exception
+        assert app.session_state["assistant"] == "travel"
+
+    def test_each_assistant_has_its_own_conversation(self) -> None:
+        """Switching assistants mid-demo must not discard the other thread."""
         app = self._app()
 
-        assert app.radio, "the scope selector must be present"
-        options = app.radio[0].options
-        assert len(options) == 5, "one overview plus four modules"
-        for label in ("Research", "Fact Checker", "Marketing", "Travel"):
-            assert any(label in option for option in options), f"{label} missing from the bar"
+        threads = app.session_state["threads"]
+        assert set(threads) == set(MODULE_PORTS)
+        assert all(messages == [] for messages in threads.values())
 
-    @pytest.mark.parametrize(
-        ("module_id", "expected_agents"),
-        [
-            ("research", ["researcher", "analyst", "reviewer"]),
-            ("fact_checker", ["fact_researcher", "verification"]),
-            ("marketing", ["researcher", "strategist", "writer"]),
-            ("travel", ["planner", "search", "booking"]),
-        ],
-    )
-    def test_each_module_page_renders(self, module_id: str, expected_agents: list[str]) -> None:
-        app = self._app()
-        app.radio[0].set_value(module_id).run()
+    def test_a_failed_run_shows_a_plain_message(self, monkeypatch) -> None:
+        """No status codes or stack traces reach the audience."""
+        pytest.importorskip("streamlit")
+        from streamlit.testing.v1 import AppTest
 
-        assert not app.exception, [e.value for e in app.exception]
-        # Run, Traces, Tokens, Failure modes.
-        assert len(app.tabs) == 4
+        import ui.api
 
+        # Force the failure path regardless of whether services happen to be
+        # running on this machine.
+        def refuse(url, json=None, timeout=None):
+            raise httpx.ConnectError("connection refused")
 
-class TestChartTitles:
-    def test_untitled_chart_has_no_undefined_title(self) -> None:
-        """Plotly renders a None title as the literal string 'undefined'."""
-        figure = topology_graph({"modules": {}}, {})
-        assert figure.layout.title.text in (None, "")
+        monkeypatch.setattr(ui.api.httpx, "post", refuse)
 
-    def test_titled_chart_keeps_its_title(self) -> None:
-        spans = [{"name": "a", "kind": "llm", "status": "ok",
-                  "started_at": "2026-01-01T00:00:00Z", "duration_ms": 1.0, "service_id": "s"}]
-        assert trace_waterfall(spans, "Trace abc").layout.title.text == "Trace abc"
+        app = AppTest.from_file("ui/app.py", default_timeout=60)
+        app.run()
+        app.session_state["pending"] = "a question"
+        app.run()
+
+        assert not app.exception
+        warnings = [w.value for w in app.warning]
+        assert warnings, "a failure must be reported to the user"
+        for text in warnings:
+            assert "HTTP" not in text, "no status codes in front of an audience"
+            assert "Traceback" not in text
+            assert "ConnectError" not in text
+            assert "could not complete" in text
 
 
-class TestAgentOutputRendering:
-    """An agent's deliverable is markdown and must be shown in full.
+class TestOutputCleaning:
+    """Model output is markdown, and it does not always arrive well formed."""
 
-    It used to go into a fixed-height HTML div, which both left the markdown
-    unrendered and cut long output off part way through.
-    """
-
-    def test_output_is_rendered_as_markdown_not_raw_html(self) -> None:
-        source = pathlib.Path("ui/app.py").read_text(encoding="utf-8")
-
-        assert "agent-out" not in source, "the clipping fixed-height box must be gone"
-        assert "max-height:320px" not in source
-
-    def test_renderer_writes_the_whole_output(self, monkeypatch) -> None:
+    def test_br_tags_are_stripped(self) -> None:
         import ui.app as app
 
-        written: list[str] = []
-        monkeypatch.setattr(app.st, "markdown", lambda text, **kw: written.append(text))
-        monkeypatch.setattr(app.st, "caption", lambda *a, **kw: None)
-        monkeypatch.setattr(app.st, "code", lambda *a, **kw: None)
-        monkeypatch.setattr(app.st, "expander", lambda *a, **kw: contextlib.nullcontext())
+        assert app.clean("a<br>b<br />c<BR/>d") == "a b c d"
 
-        long_output = "# Heading\n\n" + ("a paragraph of text. " * 400)
-        app.render_agent_output(long_output)
-
-        assert written, "the output must be rendered"
-        assert written[0] == long_output, "the full text, untruncated"
-
-    def test_missing_output_does_not_raise(self, monkeypatch) -> None:
+    def test_a_run_on_table_header_is_repaired(self) -> None:
+        """A header and its separator on one line stops the table parsing."""
         import ui.app as app
 
-        monkeypatch.setattr(app.st, "caption", lambda *a, **kw: None)
-        app.render_agent_output(None)
-        app.render_agent_output("")
+        broken = "| Day | Morning | |-----|---------|\n| 1 | Kinkaku-ji |"
+        fixed = app.clean(broken)
+
+        lines = fixed.splitlines()
+        assert len(lines) == 3, "header, separator and row must each be on a line"
+        assert lines[1].strip().startswith("|-")
+
+    def test_a_valid_table_is_left_alone(self) -> None:
+        import ui.app as app
+
+        table = "| a | b |\n|---|---|\n| 1 | 2 |"
+        assert app.clean(table) == table
+
+    def test_ordinary_prose_is_unchanged(self) -> None:
+        import ui.app as app
+
+        prose = "**Trip Brief**\n\n- Destination: Lisbon\n- Budget: mid-range"
+        assert app.clean(prose) == prose
 
 
-class TestChartKeys:
-    """Streamlit derives a chart's id from its type and parameters.
+class TestThemeIsPinned:
+    """Streamlit follows the OS theme, which rendered white text on white."""
 
-    The same chart drawn in two tabs collides and raises
-    StreamlitDuplicateElementId, so every call site passes an explicit key.
-    """
+    def test_a_light_theme_is_configured(self) -> None:
+        config = pathlib.Path(".streamlit/config.toml")
+        assert config.exists(), "the theme must be pinned, not left to the OS"
 
-    def test_every_chart_call_passes_a_key(self) -> None:
-        source = pathlib.Path("ui/app.py").read_text(encoding="utf-8")
+        text = config.read_text(encoding="utf-8")
+        assert 'base = "light"' in text
+        assert 'textColor = "#0f172a"' in text
+        assert 'backgroundColor = "#ffffff"' in text
 
-        calls = source.count("st.plotly_chart(")
-        keyed = source.count("key=")
-        assert calls > 0
-        assert keyed >= calls, f"{calls} charts but only {keyed} keys"
+    def test_the_stylesheet_sets_its_own_text_colour(self) -> None:
+        """Belt and braces: the CSS must not rely on inherited colours."""
+        assert "--ink:" in APP_SOURCE
+        assert ".stApp p, .stApp li" in APP_SOURCE
+
+
+class TestSidebarIsAlwaysReachable:
+    """A collapsed sidebar with no way back is a dead end."""
+
+    def test_the_header_is_not_hidden_outright(self) -> None:
+        """Streamlit's reopen control lives in the header."""
+        assert "#MainMenu, footer, header," not in APP_SOURCE, (
+            "hiding the header strands the user with a collapsed sidebar"
+        )
+
+    def test_a_reopen_guarantee_is_installed(self) -> None:
+        assert "aw-reopen" in APP_SOURCE
+        assert "stExpandSidebarButton" in APP_SOURCE
+
+    def test_the_fallback_shows_only_when_collapsed(self) -> None:
+        assert "collapsed ? 'block' : 'none'" in APP_SOURCE

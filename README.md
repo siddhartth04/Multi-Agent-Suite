@@ -6,7 +6,7 @@ This repository is the **SUT**. It is not the testing platform.
 
 **4 modules · 11 agents · 2 cross-module HTTP dependencies · 2 fully independent modules**
 
-![The application topology: four modules, their agent pipelines, and the cross-module HTTP dependencies](docs/screenshots/1-topology.png)
+![The Agent Workspace: a light blue sidebar listing the four assistants, with a chat area showing a completed travel itinerary](docs/screenshots/chat-conversation.png)
 
 ## Topology
 
@@ -57,56 +57,24 @@ Or all five as containers:
 docker compose up --build
 ```
 
-## Dashboard
+## Agent Workspace (UI)
 
-A Streamlit control room for driving and observing the system.
+A chat interface over the four agent modules — the demo face of the system.
 
 ```powershell
 pip install -r requirements-ui.txt
 streamlit run ui/app.py      # http://localhost:8501
 ```
 
-A bar across the top selects the scope: **◆ Application**, or one of **Research · Fact Checker · Marketing · Travel**. Each module gets its own page; the application view keeps the cross-cutting ones.
+![The Agent Workspace: a light blue sidebar listing four assistants, with a welcome panel and example prompts](docs/screenshots/chat-welcome.png)
 
-Every screenshot below is a real capture of the running system, with real LLM calls against a live provider.
+Pick an assistant from the sidebar, type a request, and the specialist team works through it:
 
-### A module's own page
+![A Travel conversation: the user's question in a blue bubble, followed by a day-by-day Kyoto itinerary](docs/screenshots/chat-conversation.png)
 
-![The Travel module page: its three agents as a pipeline, capability tags, and its own Run, Traces, Tokens and Failure modes tabs](docs/screenshots/6-module-page.png)
+Deliberately free of telemetry — no tokens, traces, spans or status codes reach the screen. Those stay on the services' own HTTP endpoints (`/telemetry/*`) for engineers and for the external testing platform.
 
-Each module page opens with its identity — port, agent count, model, whether it is independent — then its **agent pipeline**, each agent with its role, goal and any tools it uses. Below that are tabs scoped to that module alone: Run, Traces, Tokens, Failure modes.
-
-A module with a dependency shows it explicitly after its agents:
-
-![The Fact Checker page, showing a DEPENDS ON RESEARCH badge and a card reading 'Calls research over HTTP, optional'](docs/screenshots/7-module-dependency.png)
-
-### Run — drive an agent pipeline
-
-![A completed Research run: HTTP 200, three agents, 3,557 tokens in 6,536 ms, with each agent's output and a stacked token chart](docs/screenshots/2-run.png)
-
-Pick a module, type an input, press **Run**. Each agent expands to show the text it actually produced. The **Dependencies** toggle runs a module with or without its upstream call, so you can tell a module's own behaviour apart from its dependency's.
-
-### Traces — one trace across two services
-
-![A distributed trace waterfall: 15 spans across fact_checker and research, with Research's agents nested inside the service_call span](docs/screenshots/3-traces.png)
-
-The clearest evidence in the project. One request to Fact Checker produced **15 spans across 2 processes**, reassembled under a single trace id — `research.request` and its three agents are nested inside the `service_call.research` bar. Bars sit at their real start time, so concurrent work looks concurrent.
-
-### Tokens & Cost — honest accounting
-
-![Token usage: 27,565 tokens observed across 13 traces, broken down per module with the source of every count](docs/screenshots/4-tokens-cost.png)
-
-Usage rolls up **LLM call → agent → module → request**, including tokens reported by a downstream module. Every count carries a `source` (`provider` / `estimated` / `unavailable`), and unreported values stay `null` rather than `0` — counts are never fabricated.
-
-### Failure modes — deterministic faults
-
-![The failure injection panel: six scenarios, with an injected error returning HTTP 500 and a confirmation that the trace stayed correlated](docs/screenshots/5-failure-modes.png)
-
-Six injectable scenarios, one click each. A failed run still returns a complete telemetry document: the trace stays correlated, agents that already ran are still listed, and their tokens are still counted.
-
-**[Full walkthrough →](docs/DASHBOARD.md)**
-
-The dashboard is a **pure consumer of the public HTTP API** — it never imports module or agent code, so everything it displays is exactly what the external testing platform can observe. It also runs with no services up, showing them as unreachable rather than erroring.
+The UI is a **pure consumer of the public HTTP API** — it never imports module or agent code, and runs with no services up (reporting a plain message rather than an error).
 
 In Docker it comes up alongside the rest at `localhost:8501`; module URLs come from the same `*_URL` environment variables.
 
@@ -241,7 +209,7 @@ pytest
 | `tests/test_failure_modes.py` | Every failure mode and partial-failure telemetry |
 | `tests/test_gateway.py` | Topology, registry, routing |
 | `tests/test_config_and_tokens.py` | Configuration, token extraction, tools |
-| `tests/test_ui.py` | Dashboard client, charts, and the app script itself |
+| `tests/test_ui.py` | Workspace client, assistant catalogue, and the app script |
 
 ## Layout
 
@@ -260,7 +228,7 @@ modules/
     module.py        agent definitions and dependencies (data, not behaviour)
     server.py        ASGI entry point
 gateway/             registry, topology, routing
-ui/                  Streamlit dashboard (api client, charts, app)
+ui/                  Streamlit workspace (api client + chat app)
 deploy/              one Dockerfile per service
 ```
 

@@ -1,8 +1,7 @@
-"""HTTP client for the UI.
+"""HTTP client for the workspace.
 
-The dashboard is a pure consumer of the same public API the external testing
-platform uses -- it never imports module or agent code, so what it displays is
-exactly what the platform can observe.
+A pure consumer of the modules' public HTTP API -- it never imports module or
+agent code, so the UI stays decoupled from the services it drives.
 """
 
 from __future__ import annotations
@@ -25,8 +24,8 @@ MODULE_PORTS = {
 def default_module_urls() -> dict[str, str]:
     """Module URLs from the environment, falling back to local ports.
 
-    Lets the same dashboard image run against localhost, Docker service names,
-    or separately deployed hosts without a code change.
+    Lets the same image run against localhost, Docker service names, or
+    separately deployed hosts without a code change.
     """
     return {
         module_id: os.getenv(f"{module_id.upper()}_URL", f"http://127.0.0.1:{port}").rstrip("/")
@@ -62,8 +61,8 @@ def _post(url: str, payload: dict, timeout: float) -> ApiResult:
     try:
         response = httpx.post(url, json=payload, timeout=timeout)
         body = response.json() if response.content else None
-        # A module answers a handled failure with 500/504 and a full telemetry
-        # document, which the UI still wants to display.
+        # A module answers a handled failure with 500/504 and a body, which the
+        # caller still wants, so the body is returned either way.
         return ApiResult(
             ok=response.status_code < 400,
             data=body,
@@ -75,22 +74,13 @@ def _post(url: str, payload: dict, timeout: float) -> ApiResult:
 
 
 class SutClient:
-    """Reads topology, health and telemetry, and runs modules."""
+    """Checks module health and runs modules."""
 
     def __init__(self, gateway_url: str = DEFAULT_GATEWAY, module_urls: dict[str, str] | None = None) -> None:
         self.gateway_url = gateway_url.rstrip("/")
         self.module_urls = module_urls or default_module_urls()
 
     # ---------------------------------------------------------- discovery
-    def topology(self) -> ApiResult:
-        return _get(f"{self.gateway_url}/topology")
-
-    def gateway_health(self) -> ApiResult:
-        return _get(f"{self.gateway_url}/health", timeout=15.0)
-
-    def discovery(self) -> ApiResult:
-        return _get(f"{self.gateway_url}/discovery", timeout=15.0)
-
     def module_health(self, module_id: str) -> ApiResult:
         return _get(f"{self.module_urls[module_id]}/health", timeout=5.0)
 
@@ -111,26 +101,6 @@ class SutClient:
         if failure_mode and failure_mode != "normal":
             payload["failure_mode"] = failure_mode
         return _post(f"{self.module_urls[module_id]}/run", payload, timeout)
-
-    # ------------------------------------------------------- observability
-    def traces(self, module_id: str, limit: int = 20) -> ApiResult:
-        return _get(f"{self.module_urls[module_id]}/telemetry/traces?limit={limit}")
-
-    def trace(self, module_id: str, trace_id: str) -> ApiResult:
-        return _get(f"{self.module_urls[module_id]}/telemetry/traces/{trace_id}")
-
-    def distributed_trace(self, trace_id: str) -> ApiResult:
-        return _get(f"{self.gateway_url}/telemetry/traces/{trace_id}", timeout=15.0)
-
-    def tokens(self, module_id: str) -> ApiResult:
-        return _get(f"{self.module_urls[module_id]}/telemetry/tokens")
-
-    def clear_traces(self, module_id: str) -> ApiResult:
-        try:
-            response = httpx.delete(f"{self.module_urls[module_id]}/telemetry/traces", timeout=5.0)
-            return ApiResult(response.status_code < 400, data=response.json())
-        except Exception as exc:  # noqa: BLE001
-            return ApiResult(False, error=str(exc)[:200])
 
     # ------------------------------------------------------------ helpers
     def all_health(self) -> dict[str, ApiResult]:

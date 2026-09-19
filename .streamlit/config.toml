@@ -1,0 +1,15 @@
+# The workspace is designed as a light interface. Pinning the theme here means
+# it renders identically regardless of the viewer's OS dark-mode setting --
+# otherwise Streamlit keeps its dark text colours against our white surfaces.
+[theme]
+base = "light"
+primaryColor = "#2563eb"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#eff6ff"
+textColor = "#0f172a"
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
